@@ -37,5 +37,5 @@ Python ve discord.py ile yapılmış çok fonksiyonlu, SQLite destekli Discord b
 
 5-Run diyip çalıştırın
 
-6-devoloper portal sunucunua atın :)
-```bash
+6-devoloper portal sunucunuza atın :)
+
