@@ -5,6 +5,7 @@ import random
 import sqlite3
 import time
 import datetime
+import os  # token için eklendi
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -45,10 +46,16 @@ CREATE TABLE IF NOT EXISTS support_counter (
 ''')
 conn.commit()
 
-# --- BOT AÇILDIĞINDA ---
 @bot.event
 async def on_ready():
     await tree.sync()
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="ErtigonZ Bot • Geliştiriliyor..."
+        ),
+        status=discord.Status.dnd
+    )
     print(f"Bot aktif: {bot.user}")
 
 # --- LOG SİSTEMİ ---
@@ -222,18 +229,6 @@ async def on_member_join(member):
 📅 Hesap Oluşturulma: {created_at}
 """
             )
-@bot.event
-async def on_ready():
-    await tree.sync()
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,  # playing / listening / watching / competing
-            name="ErtigonZ Bot • Geliştiriliyor..."
-        ),
-        status=discord.Status.dnd  # online, idle, dnd, invisible
-    )
-    print(f"Bot aktif: {bot.user}")
-
 
 @bot.event
 async def on_member_remove(member):
@@ -244,7 +239,6 @@ async def on_member_remove(member):
         if channel:
             count = sum(1 for m in member.guild.members if not m.bot)
             await channel.send(f"🔴 {member.mention} sunucudan ayrıldı. ({count + 1} → {count} kişi kaldık)")
-
 
 # --- /destek_setup ---
 @tree.command(name="destek_setup", description="Destek sistemini kurar")
@@ -313,4 +307,4 @@ async def destek_setup(interaction: discord.Interaction, role: discord.Role, kan
     await kanal.send(embed=embed, view=view)
     await interaction.response.send_message("✅ Destek sistemi kuruldu.", ephemeral=True)
 
-bot.run("BOT TOKEN") #Discord Devoloper Portal'dan Aldığınız Token'i Yapıştırın
+bot.run("TOKEN") #Bu kısma devoloper portal'dan aldığınız token'i yapıştırın.
