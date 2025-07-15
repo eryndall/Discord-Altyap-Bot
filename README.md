@@ -39,6 +39,3 @@ Python ve discord.py ile yapılmış çok fonksiyonlu, SQLite destekli Discord b
 
 6-devoloper portal sunucunua atın :)
 ```bash
-
-
-
