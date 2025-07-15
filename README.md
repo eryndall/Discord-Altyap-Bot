@@ -1,2 +1,3 @@
 # Discord-Altyap-Bot
-altyapı bot
+
+Main'i kopyalayın ve Pycharm veya onun gibi bir programa yapıştırın
