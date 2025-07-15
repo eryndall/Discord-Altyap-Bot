@@ -1,0 +1,316 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+import random
+import sqlite3
+import time
+import datetime
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+tree = bot.tree
+
+conn = sqlite3.connect('user_data.db')
+cursor = conn.cursor()
+
+# Veritabanı tabloları
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    coins INTEGER,
+    last_daily INTEGER
+)
+''')
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS support_config (
+    guild_id INTEGER PRIMARY KEY,
+    role_id INTEGER,
+    message_channel_id INTEGER,
+    log_channel_id INTEGER
+)
+''')
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS support_counter (
+    guild_id INTEGER,
+    date TEXT,
+    counter INTEGER,
+    PRIMARY KEY(guild_id, date)
+)
+''')
+conn.commit()
+
+# --- BOT AÇILDIĞINDA ---
+@bot.event
+async def on_ready():
+    await tree.sync()
+    print(f"Bot aktif: {bot.user}")
+
+# --- LOG SİSTEMİ ---
+@bot.event
+async def on_guild_channel_update(before, after):
+    if before.name != after.name:
+        cursor.execute("SELECT log_channel_id FROM support_config WHERE guild_id = ?", (before.guild.id,))
+        row = cursor.fetchone()
+        if row:
+            log_channel = bot.get_channel(row[0])
+            if log_channel:
+                await log_channel.send(f"📢 Kanal adı değişti: **{before.name}** ➜ **{after.name}**")
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    cursor.execute("SELECT log_channel_id FROM support_config WHERE guild_id = ?", (channel.guild.id,))
+    row = cursor.fetchone()
+    if row:
+        log_channel = bot.get_channel(row[0])
+        if log_channel:
+            await log_channel.send(f"❌ Kanal silindi: **{channel.name}**")
+
+@bot.event
+async def on_message_delete(message):
+    if message.guild:
+        cursor.execute("SELECT log_channel_id FROM support_config WHERE guild_id = ?", (message.guild.id,))
+        row = cursor.fetchone()
+        if row:
+            log_channel = bot.get_channel(row[0])
+            if log_channel:
+                await log_channel.send(f"🗑️ Mesaj silindi: **{message.author}** → `{message.content}`")
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.guild and before.content != after.content:
+        cursor.execute("SELECT log_channel_id FROM support_config WHERE guild_id = ?", (before.guild.id,))
+        row = cursor.fetchone()
+        if row:
+            log_channel = bot.get_channel(row[0])
+            if log_channel:
+                await log_channel.send(f"✏️ Mesaj düzenlendi:\n**{before.author}** → Önce: `{before.content}` / Sonra: `{after.content}`")
+
+@bot.event
+async def on_guild_role_update(before, after):
+    if before.colour != after.colour:
+        cursor.execute("SELECT log_channel_id FROM support_config WHERE guild_id = ?", (before.guild.id,))
+        row = cursor.fetchone()
+        if row:
+            log_channel = bot.get_channel(row[0])
+            if log_channel:
+                await log_channel.send(f"🎨 Rol rengi değişti: **{before.name}** → Yeni renk: {after.colour}")
+
+# --- /ping ---
+@tree.command(name="ping", description="Botun yanıt süresini gösterir")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("🏓 Pong!")
+
+# --- /clear ---
+@tree.command(name="clear", description="Mesajları siler")
+@app_commands.describe(amount="Silinecek mesaj sayısı veya 'all'")
+async def clear(interaction: discord.Interaction, amount: str):
+    if not interaction.channel.permissions_for(interaction.user).manage_messages:
+        await interaction.response.send_message("Yetkin yok.", ephemeral=True)
+        return
+    if amount == "all":
+        deleted = await interaction.channel.purge()
+        await interaction.response.send_message(f"{len(deleted)} mesaj silindi.", ephemeral=True)
+    else:
+        try:
+            num = int(amount)
+            deleted = await interaction.channel.purge(limit=num)
+            await interaction.response.send_message(f"{len(deleted)} mesaj silindi.", ephemeral=True)
+        except ValueError:
+            await interaction.response.send_message("Geçerli bir sayı girin veya 'all' yazın.", ephemeral=True)
+
+# --- /daily ---
+@tree.command(name="daily", description="12 saatte bir coin verir")
+async def daily(interaction: discord.Interaction):
+    uid = interaction.user.id
+    now = int(time.time())
+    cursor.execute('SELECT coins, last_daily FROM users WHERE user_id = ?', (uid,))
+    row = cursor.fetchone()
+    if row:
+        last = row[1]
+        if now - last < 43200:
+            kalan = 43200 - (now - last)
+            await interaction.response.send_message(f"⏳ Tekrar almak için {kalan} saniye beklemelisin.")
+            return
+        coins = row[0] + random.randint(800, 3000)
+    else:
+        coins = random.randint(800, 3000)
+    cursor.execute('REPLACE INTO users (user_id, coins, last_daily) VALUES (?, ?, ?)', (uid, coins, now))
+    conn.commit()
+    await interaction.response.send_message(f"🎉 {coins} coin kazandınız!")
+
+# --- /cash ---
+@tree.command(name="cash", description="Bakiyenizi gösterir")
+async def cash(interaction: discord.Interaction):
+    uid = interaction.user.id
+    cursor.execute('SELECT coins FROM users WHERE user_id = ?', (uid,))
+    row = cursor.fetchone()
+    if row:
+        await interaction.response.send_message(f"💰 Bakiyeniz: {row[0]} coin")
+    else:
+        await interaction.response.send_message("Hiç coin kazanmadınız.")
+
+# --- /cf ---
+@tree.command(name="cf", description="Coin ile yazı tura")
+@app_commands.describe(amount="Bahis miktarı veya 'all'")
+async def cf(interaction: discord.Interaction, amount: str):
+    uid = interaction.user.id
+    cursor.execute('SELECT coins FROM users WHERE user_id = ?', (uid,))
+    row = cursor.fetchone()
+    if not row:
+        await interaction.response.send_message("Hiç coin'iniz yok.")
+        return
+    balance = row[0]
+    if amount == "all":
+        bet = balance
+    else:
+        try:
+            bet = int(amount)
+        except:
+            await interaction.response.send_message("Geçersiz miktar.")
+            return
+    if bet > balance or bet <= 0:
+        await interaction.response.send_message("❌ Yeterli coin yok.")
+        return
+    win = random.choices([True, False], weights=[40, 60])[0]
+    if win:
+        balance += bet
+        msg = f"✅ Kazandınız! Yeni bakiyeniz: {balance}"
+    else:
+        balance -= bet
+        msg = f"❌ Kaybettiniz. Yeni bakiyeniz: {balance}"
+    cursor.execute('UPDATE users SET coins = ? WHERE user_id = ?', (balance, uid))
+    conn.commit()
+    await interaction.response.send_message(msg)
+
+cursor.execute('''
+CREATE TABLE IF NOT EXISTS login_log (
+    guild_id INTEGER PRIMARY KEY,
+    login_channel_id INTEGER
+)
+''')
+conn.commit()
+
+@tree.command(name="login_setup", description="Giriş çıkış log kanalını ayarlar")
+@app_commands.describe(kanal="Giriş/çıkış loglarının gideceği kanal")
+async def login_setup(interaction: discord.Interaction, kanal: discord.TextChannel):
+    cursor.execute('REPLACE INTO login_log (guild_id, login_channel_id) VALUES (?, ?)', (interaction.guild.id, kanal.id))
+    conn.commit()
+    await interaction.response.send_message(f"✅ Giriş çıkış log kanalı {kanal.mention} olarak ayarlandı.", ephemeral=True)
+
+@bot.event
+async def on_member_join(member):
+    cursor.execute('SELECT login_channel_id FROM login_log WHERE guild_id = ?', (member.guild.id,))
+    row = cursor.fetchone()
+    if row:
+        channel = bot.get_channel(row[0])
+        if channel:
+            count = sum(1 for m in member.guild.members if not m.bot)
+            created_at = discord.utils.format_dt(member.created_at, style='R')
+            await channel.send(
+                f"""🌴 **Yeni Üye Katıldı!**
+
+👋 Hoşgeldin {member.mention}
+💫 Artık {count} üyeyiz!
+📨 Davet eden: *(bulunamadı / özelleştirilebilir)*  
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+📅 Hesap Oluşturulma: {created_at}
+"""
+            )
+@bot.event
+async def on_ready():
+    await tree.sync()
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,  # playing / listening / watching / competing
+            name="ErtigonZ Bot • Geliştiriliyor..."
+        ),
+        status=discord.Status.dnd  # online, idle, dnd, invisible
+    )
+    print(f"Bot aktif: {bot.user}")
+
+
+@bot.event
+async def on_member_remove(member):
+    cursor.execute('SELECT login_channel_id FROM login_log WHERE guild_id = ?', (member.guild.id,))
+    row = cursor.fetchone()
+    if row:
+        channel = bot.get_channel(row[0])
+        if channel:
+            count = sum(1 for m in member.guild.members if not m.bot)
+            await channel.send(f"🔴 {member.mention} sunucudan ayrıldı. ({count + 1} → {count} kişi kaldık)")
+
+
+# --- /destek_setup ---
+@tree.command(name="destek_setup", description="Destek sistemini kurar")
+@app_commands.describe(role="Destek rolü", kanal="Butonların gönderileceği kanal", log="Log kanalı")
+async def destek_setup(interaction: discord.Interaction, role: discord.Role, kanal: discord.TextChannel, log: discord.TextChannel):
+    gid = interaction.guild.id
+    cursor.execute('REPLACE INTO support_config VALUES (?, ?, ?, ?)', (gid, role.id, kanal.id, log.id))
+    conn.commit()
+
+    embed = discord.Embed(
+        title="🎫 Destek Talebi Sistemi",
+        description=(
+            "Destek Sistemimize Hoş Geldiniz! Talep oluşturmak için lütfen aşağıdan uygun kategoriyi seçin\n\n\n"
+            "🔧 Teknik Destek\nTeknik sorunlar, hatalar veya genel yardım için\n\n"
+            "🧭 Diğer Sorular\nDiğer tüm soru veya endişeleriniz için\n\n"
+            "Talep oluşturmak için aşağıdaki düğmelere tıklayın."
+        ),
+        color=discord.Color.red()
+    )
+
+    view = discord.ui.View()
+
+    class DestekButton(discord.ui.Button):
+        def __init__(self, label):
+            super().__init__(label=label, style=discord.ButtonStyle.primary)
+
+        async def callback(self, interaction2: discord.Interaction):
+            await interaction2.response.defer(ephemeral=True)
+            today = datetime.date.today().isoformat()
+            cursor.execute('SELECT counter FROM support_counter WHERE guild_id = ? AND date = ?', (gid, today))
+            row = cursor.fetchone()
+            num = 1 if row is None else row[0] + 1
+            cursor.execute('REPLACE INTO support_counter VALUES (?, ?, ?)', (gid, today, num))
+            conn.commit()
+
+            category = discord.utils.get(interaction.guild.categories, name="Destek Talepleri")
+            if category is None:
+                category = await interaction.guild.create_category("Destek Talepleri")
+
+            overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                interaction2.user: discord.PermissionOverwrite(read_messages=True),
+                role: discord.PermissionOverwrite(read_messages=True)
+            }
+
+            ch = await interaction.guild.create_text_channel(
+                name=f"destek-talebi-{num}", category=category, overwrites=overwrites)
+
+            await ch.send(f"{interaction2.user.mention} destek talebi oluşturdu. {role.mention}")
+
+            kapat_view = discord.ui.View()
+
+            class KapatButton(discord.ui.Button):
+                def __init__(self):
+                    super().__init__(label="Kapat", style=discord.ButtonStyle.danger)
+
+                async def callback(self, interaction3: discord.Interaction):
+                    await interaction3.channel.delete()
+                    await log.send(f"{interaction2.user} destek talebini kapattı.")
+
+            kapat_view.add_item(KapatButton())
+            await ch.send("Destek talebi başarıyla açıldı. Yetkililer sizinle ilgilenecektir.", view=kapat_view)
+
+    view.add_item(DestekButton("🔧 Teknik Destek"))
+    view.add_item(DestekButton("🧭 Diğer Sorular"))
+    await kanal.send(embed=embed, view=view)
+    await interaction.response.send_message("✅ Destek sistemi kuruldu.", ephemeral=True)
+
+bot.run("BOT TOKEN") #Discord Devoloper Portal'dan Aldığınız Token'i Yapıştırın
